@@ -22,6 +22,21 @@ header p{margin:0;color:#555}
 .editor mark{background:#fff176}
 .editor .math{font-family:"Times New Roman",serif;font-size:1.08em}
 .editor sub,.editor sup{font-size:.75em}
+.editor img.card-image{display:block;max-width:100%;height:auto;margin:6px auto;cursor:pointer;border:2px solid transparent;border-radius:4px}
+.editor img.card-image.selected{border-color:#2563eb}
+.image-tools{display:none;gap:5px;flex-wrap:wrap;padding:6px;border-top:1px solid #ddd;background:#f7f7f7;align-items:center}
+.image-tools.active{display:flex}
+.image-tools button{padding:4px 7px;font-size:12px}
+.image-tools .remove-image{color:#900}
+.card-content.has-image{display:flex;gap:2mm}
+.card-content.has-image.pos-top{flex-direction:column}
+.card-content.has-image.pos-bottom{flex-direction:column-reverse}
+.card-content.has-image.pos-left{flex-direction:row}
+.card-content.has-image.pos-right{flex-direction:row-reverse}
+.card-content .print-image{object-fit:contain;flex:0 0 auto;max-width:100%;max-height:100%}
+.card-content.pos-top .print-image,.card-content.pos-bottom .print-image{max-height:65%;width:auto}
+.card-content.pos-left .print-image,.card-content.pos-right .print-image{max-width:55%;height:auto}
+.card-content .text-part{min-width:0;min-height:0;flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden}
 button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}
 .primary{background:#111;color:white}.secondary{background:#ddd}.danger{background:#eee;color:#900;padding:10px}
 .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
@@ -75,7 +90,7 @@ button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:point
     <button class="primary" id="print">Créer / imprimer le PDF</button>
   </div>
   <div class="note">
-    Les cartes portent « QUESTION » au recto et « RÉPONSE » au verso. Les boutons permettent gras, italique, souligné, surlignage, exposant, indice et insertion de formules. La taille du texte s’adapte automatiquement à chaque carte (jusqu’à 7 pt minimum). Les contours sont épais et des espaces sont prévus entre les cartes pour faciliter la découpe.
+    Les cartes portent « QUESTION » au recto et « RÉPONSE » au verso. Les boutons permettent gras, italique, souligné, surlignage, exposant, indice, insertion de formules et ajout facultatif d’images. Clique sur une image pour la redimensionner, la placer en haut, en bas, à gauche ou à droite, ou la supprimer. La taille du texte s’adapte automatiquement à chaque carte (jusqu’à 7 pt minimum). Les contours sont épais et des espaces sont prévus entre les cartes pour faciliter la découpe.
     Dans la fenêtre d'impression : A4, échelle 100 %, recto-verso, retournement bord long.
     Choisis « Enregistrer au format PDF » si tu veux obtenir un fichier PDF.
   </div>
@@ -96,18 +111,47 @@ function editorHTML(kind){
       <button type="button" data-cmd="superscript" title="Exposant">x²</button>
       <button type="button" data-cmd="subscript" title="Indice">x₂</button>
       <button type="button" data-math="1" title="Insérer une formule">ƒ(x)</button>
+      <button type="button" data-image="1" title="Ajouter une image">🖼 Image</button>
+      <input type="file" accept="image/*" data-image-input hidden>
     </div>
     <div class="editor ${kind}" contenteditable="true"></div>
+    <div class="image-tools">
+      <button type="button" data-size="smaller" title="Réduire l'image">−</button>
+      <button type="button" data-size="larger" title="Agrandir l'image">+</button>
+      <button type="button" data-size="auto" title="Taille automatique">Auto</button>
+      <button type="button" data-pos="top" title="Image au-dessus">↑ Haut</button>
+      <button type="button" data-pos="bottom" title="Image en dessous">↓ Bas</button>
+      <button type="button" data-pos="left" title="Image à gauche">← Gauche</button>
+      <button type="button" data-pos="right" title="Image à droite">Droite →</button>
+      <button type="button" class="remove-image" data-remove-image title="Supprimer l'image">✕ Image</button>
+    </div>
   </div>`;
 }
 function wireEditor(wrap){
   const ed=wrap.querySelector('.editor');
+  const imageBtn=wrap.querySelector('[data-image]');
+  const imageInput=wrap.querySelector('[data-image-input]');
+  const tools=wrap.querySelector('.image-tools');
+  let selectedImage=null;
+
+  function selectImage(img){
+    ed.querySelectorAll('img.card-image').forEach(i=>i.classList.remove('selected'));
+    selectedImage=img||null;
+    if(selectedImage){
+      selectedImage.classList.add('selected');
+      tools.classList.add('active');
+    }else{
+      tools.classList.remove('active');
+    }
+  }
+
   wrap.querySelectorAll('[data-cmd]').forEach(btn=>{
     btn.addEventListener('mousedown',e=>{
       e.preventDefault(); ed.focus();
       document.execCommand(btn.dataset.cmd,false,btn.dataset.val||null);
     });
   });
+
   wrap.querySelector('[data-math]').addEventListener('mousedown',e=>{
     e.preventDefault(); ed.focus();
     const raw=prompt("Formule (exemples : x^2, a/b, sqrt(x), integral, pi, <=, >=) :");
@@ -115,6 +159,71 @@ function wireEditor(wrap){
     const safe=escapeHTML(raw.trim());
     const pretty=formatMath(safe);
     document.execCommand('insertHTML',false,`<span class="math">${pretty}</span>`);
+  });
+
+  imageBtn.addEventListener('mousedown',e=>{
+    e.preventDefault();
+    imageInput.click();
+  });
+
+  imageInput.addEventListener('change',()=>{
+    const file=imageInput.files && imageInput.files[0];
+    if(!file) return;
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const img=document.createElement('img');
+      img.src=reader.result;
+      img.alt='';
+      img.className='card-image';
+      img.dataset.position='top';
+      img.dataset.width='auto';
+      img.style.width='auto';
+      img.style.maxWidth='100%';
+      img.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();selectImage(img);});
+      ed.appendChild(img);
+      selectImage(img);
+      imageInput.value='';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  ed.addEventListener('click',e=>{
+    if(e.target.matches('img.card-image')) selectImage(e.target);
+    else selectImage(null);
+  });
+
+  tools.querySelectorAll('[data-size]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      if(!selectedImage) return;
+      if(btn.dataset.size==='auto'){
+        selectedImage.dataset.width='auto';
+        selectedImage.style.width='auto';
+        selectedImage.style.maxWidth='100%';
+        return;
+      }
+      let current=selectedImage.dataset.width==='auto' ? 50 : parseInt(selectedImage.dataset.width||'50',10);
+      current += btn.dataset.size==='larger' ? 10 : -10;
+      current=Math.max(20,Math.min(100,current));
+      selectedImage.dataset.width=String(current);
+      selectedImage.style.width=current+'%';
+      selectedImage.style.maxWidth='100%';
+    });
+  });
+
+  tools.querySelectorAll('[data-pos]').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      if(selectedImage) selectedImage.dataset.position=btn.dataset.pos;
+    });
+  });
+
+  tools.querySelector('[data-remove-image]').addEventListener('click',()=>{
+    if(!selectedImage) return;
+    selectedImage.remove();
+    selectImage(null);
+  });
+
+  ed.querySelectorAll('img.card-image').forEach(img=>{
+    img.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();selectImage(img);});
   });
 }
 function escapeHTML(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
@@ -145,7 +254,7 @@ function collect(){
     a:r.querySelector('.a').innerHTML.trim(),
     qt:r.querySelector('.q').innerText.trim(),
     at:r.querySelector('.a').innerText.trim()
-  })).filter(x=>x.qt || x.at);
+  })).filter(x=>x.qt || x.at || /<img\b/i.test(x.q) || /<img\b/i.test(x.a));
 }
 function card(text,label){
   const d=document.createElement('div');
@@ -155,7 +264,33 @@ function card(text,label){
   l.textContent=label;
   const c=document.createElement('div');
   c.className='card-content';
-  c.innerHTML=text;
+
+  const temp=document.createElement('div');
+  temp.innerHTML=text;
+  const img=temp.querySelector('img.card-image');
+  if(img){
+    const pos=img.dataset.position||'top';
+    const width=img.dataset.width||'auto';
+    const printImg=img.cloneNode(true);
+    printImg.classList.remove('selected','card-image');
+    printImg.classList.add('print-image');
+    printImg.removeAttribute('contenteditable');
+    if(width==='auto'){
+      printImg.style.width='auto';
+    }else{
+      printImg.style.width=Math.max(20,Math.min(100,parseInt(width,10)||50))+'%';
+    }
+    img.remove();
+    const textPart=document.createElement('div');
+    textPart.className='text-part';
+    textPart.innerHTML=temp.innerHTML;
+    c.classList.add('has-image','pos-'+pos);
+    c.appendChild(printImg);
+    c.appendChild(textPart);
+  }else{
+    c.innerHTML=text;
+  }
+
   d.appendChild(l); d.appendChild(c);
   return d;
 }
@@ -192,15 +327,27 @@ function backOrder(group){
 }
 function fitPrintedCards(){
   document.querySelectorAll('#print-area .card-content').forEach(c=>{
+    const textTarget=c.querySelector('.text-part')||c;
     let size=13;
-    c.style.fontSize=size+'pt';
-    // Reduce only while the rich content exceeds the printable card area.
+    textTarget.style.fontSize=size+'pt';
     while((c.scrollHeight > c.clientHeight || c.scrollWidth > c.clientWidth) && size > 7){
       size -= 0.5;
-      c.style.fontSize=size+'pt';
+      textTarget.style.fontSize=size+'pt';
     }
     if(c.scrollHeight > c.clientHeight || c.scrollWidth > c.clientWidth){
-      c.style.fontSize='7pt';
+      textTarget.style.fontSize='7pt';
+      const img=c.querySelector('.print-image');
+      if(img){
+        let scale=100;
+        while((c.scrollHeight > c.clientHeight || c.scrollWidth > c.clientWidth) && scale>35){
+          scale-=5;
+          if(c.classList.contains('pos-left')||c.classList.contains('pos-right')){
+            img.style.maxWidth=(55*scale/100)+'%';
+          }else{
+            img.style.maxHeight=(65*scale/100)+'%';
+          }
+        }
+      }
     }
   });
 }
