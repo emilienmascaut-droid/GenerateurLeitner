@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Générateur de cartes Leitner A8</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1b1b1b}
+*{box-sizing:border-box}
+body{margin:0;background:#f3f4f6}
+header,.controls{max-width:1050px;margin:auto}
+header{padding:28px 20px 8px}
+h1{margin:0 0 6px;font-size:26px}
+header p{margin:0;color:#555}
+.controls{padding:18px 20px 30px}
+.card-row{display:grid;grid-template-columns:48px 1fr 1fr 42px;gap:10px;align-items:start;margin:10px 0}
+.num{padding-top:12px;font-weight:700;text-align:center}
+.editor-wrap{background:white;border:1px solid #bbb;border-radius:8px;overflow:hidden}
+.toolbar{display:flex;gap:4px;flex-wrap:wrap;padding:5px;border-bottom:1px solid #ddd;background:#f7f7f7}
+.toolbar button{padding:4px 8px;border-radius:5px;background:#e7e7e7;font-weight:700}
+.editor{min-height:76px;padding:10px;outline:none;overflow:auto}
+.editor mark{background:#fff176}
+.editor .math{font-family:"Times New Roman",serif;font-size:1.08em}
+.editor sub,.editor sup{font-size:.75em}
+button{border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer}
+.primary{background:#111;color:white}.secondary{background:#ddd}.danger{background:#eee;color:#900;padding:10px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.note{font-size:13px;color:#555;margin-top:12px}
+#print-area{display:none}
+
+/* A4 portrait. Eight A8 cards: 2 columns × 4 rows.
+   A8 = 52 × 74 mm. We use 74 × 52 mm landscape cards. */
+.sheet{
+  width:210mm;height:297mm;background:white;
+  display:grid;grid-template-columns:74mm 74mm;grid-template-rows:repeat(4,52mm);
+  column-gap:6mm;row-gap:5mm;
+  justify-content:center;align-content:center;
+  page-break-after:always;break-after:page;
+}
+.flashcard{
+  width:74mm;height:52mm;border:1.2mm solid #000;
+  padding:3mm 5mm 5mm;display:flex;flex-direction:column;
+  text-align:center;white-space:pre-wrap;overflow:hidden;
+  font-size:13pt;line-height:1.2;
+}
+.side-label{
+  display:block;width:100%;font-size:8pt;font-weight:800;letter-spacing:.8pt;
+  padding-bottom:2mm;border-bottom:.35mm solid #000;margin-bottom:2mm;
+}
+.card-content{
+  flex:1;width:100%;display:flex;align-items:center;justify-content:center;
+  white-space:pre-wrap;overflow:hidden;
+  font-size:13pt;
+}
+
+@media print{
+  @page{size:A4 portrait;margin:0}
+  body{background:white}
+  header,.controls{display:none!important}
+  #print-area{display:block}
+  .sheet{margin:0}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Cartes Leitner — A4 / 8 cartes A8</h1>
+  <p>Saisis chaque question avec sa réponse, mets le texte en forme si besoin, puis imprime en recto-verso, retournement sur le bord long.</p>
+</header>
+
+<section class="controls">
+  <div id="rows"></div>
+  <div class="actions">
+    <button class="secondary" id="add">+ Ajouter une carte</button>
+    <button class="primary" id="print">Créer / imprimer le PDF</button>
+  </div>
+  <div class="note">
+    Les cartes portent « QUESTION » au recto et « RÉPONSE » au verso. Les boutons permettent gras, italique, souligné, surlignage, exposant, indice et insertion de formules. La taille du texte s’adapte automatiquement à chaque carte (jusqu’à 7 pt minimum). Les contours sont épais et des espaces sont prévus entre les cartes pour faciliter la découpe.
+    Dans la fenêtre d'impression : A4, échelle 100 %, recto-verso, retournement bord long.
+    Choisis « Enregistrer au format PDF » si tu veux obtenir un fichier PDF.
+  </div>
+</section>
+<div id="print-area"></div>
+
+<script>
+const rows = document.getElementById('rows');
+let nextId = 1;
+
+function editorHTML(kind){
+  return `<div class="editor-wrap">
+    <div class="toolbar">
+      <button type="button" data-cmd="bold" title="Gras">G</button>
+      <button type="button" data-cmd="italic" title="Italique"><i>I</i></button>
+      <button type="button" data-cmd="underline" title="Souligné"><u>S</u></button>
+      <button type="button" data-cmd="hiliteColor" data-val="#fff176" title="Surligner">🖍</button>
+      <button type="button" data-cmd="superscript" title="Exposant">x²</button>
+      <button type="button" data-cmd="subscript" title="Indice">x₂</button>
+      <button type="button" data-math="1" title="Insérer une formule">ƒ(x)</button>
+    </div>
+    <div class="editor ${kind}" contenteditable="true"></div>
+  </div>`;
+}
+function wireEditor(wrap){
+  const ed=wrap.querySelector('.editor');
+  wrap.querySelectorAll('[data-cmd]').forEach(btn=>{
+    btn.addEventListener('mousedown',e=>{
+      e.preventDefault(); ed.focus();
+      document.execCommand(btn.dataset.cmd,false,btn.dataset.val||null);
+    });
+  });
+  wrap.querySelector('[data-math]').addEventListener('mousedown',e=>{
+    e.preventDefault(); ed.focus();
+    const raw=prompt("Formule (exemples : x^2, a/b, sqrt(x), integral, pi, <=, >=) :");
+    if(raw===null || !raw.trim()) return;
+    const safe=escapeHTML(raw.trim());
+    const pretty=formatMath(safe);
+    document.execCommand('insertHTML',false,`<span class="math">${pretty}</span>`);
+  });
+}
+function escapeHTML(s){return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function formatMath(s){
+  return s
+    .replace(/sqrt\(([^)]+)\)/g,'√($1)')
+    .replace(/\bintegral\b/gi,'∫').replace(/\bpi\b/gi,'π')
+    .replace(/&lt;=/g,'≤').replace(/&gt;=/g,'≥')
+    .replace(/([A-Za-z0-9)]+)\^([A-Za-z0-9+-]+)/g,'$1<sup>$2</sup>')
+    .replace(/([A-Za-z0-9)]+)\/([A-Za-z0-9(]+)/g,'<span style="display:inline-flex;flex-direction:column;vertical-align:middle;line-height:1"><span style="border-bottom:1px solid">$1</span><span>$2</span></span>');
+}
+function addRow(q='', a=''){
+  const id = nextId++;
+  const row = document.createElement('div');
+  row.className='card-row'; row.dataset.id=id;
+  row.innerHTML = `<div class="num"></div>${editorHTML('q')}${editorHTML('a')}<button class="danger" title="Supprimer">×</button>`;
+  row.querySelector('.q').innerHTML=q; row.querySelector('.a').innerHTML=a;
+  row.querySelectorAll('.editor-wrap').forEach(wireEditor);
+  row.querySelector('.danger').onclick=()=>{row.remove(); renumber();};
+  rows.appendChild(row); renumber();
+}
+function renumber(){
+  [...rows.children].forEach((r,i)=>r.querySelector('.num').textContent=i+1);
+}
+function collect(){
+  return [...rows.children].map(r=>({
+    q:r.querySelector('.q').innerHTML.trim(),
+    a:r.querySelector('.a').innerHTML.trim(),
+    qt:r.querySelector('.q').innerText.trim(),
+    at:r.querySelector('.a').innerText.trim()
+  })).filter(x=>x.qt || x.at);
+}
+function card(text,label){
+  const d=document.createElement('div');
+  d.className='flashcard';
+  const l=document.createElement('div');
+  l.className='side-label';
+  l.textContent=label;
+  const c=document.createElement('div');
+  c.className='card-content';
+  c.innerHTML=text;
+  d.appendChild(l); d.appendChild(c);
+  return d;
+}
+function sheet(items,label){
+  const s=document.createElement('section');
+  s.className='sheet';
+  items.forEach(x=>s.appendChild(card(x,label)));
+  while(s.children.length<8)s.appendChild(card('',label));
+  return s;
+}
+
+/*
+Grid positions on the front:
+  0 1
+  2 3
+  4 5
+  6 7
+
+For duplex printing with LONG-EDGE flip on portrait A4, the back is mirrored
+left-to-right, so each row swaps columns:
+  1 0
+  3 2
+  5 4
+  7 6
+This keeps answer i physically behind question i after duplex printing.
+*/
+function backOrder(group){
+  const out = new Array(8).fill('');
+  for(let i=0;i<8;i++){
+    const partner = (i%2===0) ? i+1 : i-1;
+    out[partner] = group[i]?.a || '';
+  }
+  return out;
+}
+function fitPrintedCards(){
+  document.querySelectorAll('#print-area .card-content').forEach(c=>{
+    let size=13;
+    c.style.fontSize=size+'pt';
+    // Reduce only while the rich content exceeds the printable card area.
+    while((c.scrollHeight > c.clientHeight || c.scrollWidth > c.clientWidth) && size > 7){
+      size -= 0.5;
+      c.style.fontSize=size+'pt';
+    }
+    if(c.scrollHeight > c.clientHeight || c.scrollWidth > c.clientWidth){
+      c.style.fontSize='7pt';
+    }
+  });
+}
+function buildPrint(){
+  const data=collect();
+  if(!data.length){alert('Ajoute au moins une question/réponse.');return false;}
+  const area=document.getElementById('print-area');
+  area.innerHTML='';
+  for(let start=0;start<data.length;start+=8){
+    const group=data.slice(start,start+8);
+    area.appendChild(sheet(group.map(x=>x.q),'QUESTION'));
+    area.appendChild(sheet(backOrder(group),'RÉPONSE'));
+  }
+  // Wait for layout, then adapt each card independently.
+  requestAnimationFrame(()=>requestAnimationFrame(fitPrintedCards));
+  return true;
+}
+document.getElementById('add').onclick=()=>addRow();
+document.getElementById('print').onclick=()=>{
+  if(buildPrint()) setTimeout(()=>{ fitPrintedCards(); window.print(); },120);
+};
+for(let i=0;i<8;i++) addRow();
+</script>
+</body>
+</html>
